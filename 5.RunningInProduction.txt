@@ -1,0 +1,400 @@
+Running worker services in production
+==========================================
+
+* Running worker services in containers
+--------------------------------------------
+
+Containers are a popular choice for deploying microservices to production. 
+Worker services can easily be deployed in containers.
+The most popular choice is Docker on Windows, Linux, and Mac. 
+
+To instal Docker in the local computer read https://docs.docker.com
+
+At the roo folder of the solution the following files are requied
+
+	* .dockerignore       - files and folders that should not be included
+	* Dockerfile          - Steps to build a Docker image 
+	* docker-compose.yml  - 
+	
+
+The file content is as follows
+
+	// .dockerignore ..........................................
+	.git
+	.vs
+	aws
+	misc
+	test
+
+	.dockerignore
+	.gitignore
+	.gitattributes
+	.editorconfig
+
+	**/bin
+	**/obj
+	*.sln.DotSettings
+	*.md
+	*.txt
+	*.yml
+
+	src
+	!src/TennisBookings.ScoreProcessor      //<<- do bring this folder and contant
+	!src/TennisBookings.ResultsProcessing    //<<- do bring this folder and contant
+
+
+	// Dockerfile ...........................................
+
+	# First stage, preapre image, build, and publish
+
+	FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build-env   // Initial base image using sdk version 6.0, build-env is the name for the first stage
+	WORKDIR /app                                         // set working directory for upcoming instructions
+
+	COPY . .                                             // Coppy all folder/files into the image, ignoring teh ones defined in .dockerignore
+
+	# execute any command for the first stage 
+	RUN dotnet restore ./src/TennisBookings.ScoreProcessor/TennisBookings.ScoreProcessor.csproj          // restore any packages
+	RUN dotnet restore ./src/TennisBookings.ResultsProcessing/TennisBookings.ResultsProcessing.csproj    // restore any packages
+
+	# Build and publish a release
+
+	// Publish the code as Release to an 'out' folder 
+	RUN dotnet publish ./src/TennisBookings.ScoreProcessor/TennisBookings.ScoreProcessor.csproj -c Release -o out
+
+	
+	# Second stage, Build runtime image
+
+	FROM mcr.microsoft.com/dotnet/runtime:6.0             // use a second base image that has runtime only
+	WORKDIR /app                                          // Set working directory for second stage image
+	COPY --from=build-env /app/out .                      // Copy first stage image from folder 'app/out' using the name build-env into
+	                                                      // teh current directory for the second stage image
+
+	ENTRYPOINT [ "dotnet", "TennisBookings.ScoreProcessor.dll" ]  // <<-- instruction to start the service once the container is created 
+
+
+	// Executing docker image ...........................................
+	Using powerShell, open it in the soluton root folder, and use the following command to build the docker image 
+
+		C:\Training_NET\Exercise\apsnetcore6\TennisBookingBackend> docker build -t scoreprocessor .
+
+	to Exexute 
+
+	    C:\Training_NET\Exercise\apsnetcore6\TennisBookingBackend> docker run -e AWS_ACCESS_KEY_ID=<value-here> 
+		     -e AWS_SECRET_ACCESS_KEY=<value-here> scoreprocessor
+
+		Note: For this example wil lbe necesary to pass with teh run command some environment variabels using the '-e' parameter
+		      The last parameter is the image type name
+
+
+
+* Running worker services as Windows services
+------------------------------------------------
+To be able to run the appplication as windows service, it is requied to bring the
+Microsoft.Extensions.Hosting.WindowsServices package to the project 
+
+	 <ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="6.0.1" />    // Needed to run as Windows service
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="6.0.1" />
+		<PackageReference Include="AWSSDK.S3" Version="3.7.103.20" />
+		<PackageReference Include="AWSSDK.SQS" Version="3.7.100.83" />
+		<PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="3.7.4" />
+	  </ItemGroup>
+
+The program.cs need to include the 'UseWindowsService'
+
+// Program.cs 
+
+var host = Host.CreateDefaultBuilder(args)
+	.UseWindowsService( options => 
+	{
+	   options.ServiceName = "Tennis Booking Score Processor";
+	})
+	.ConfigureServices((hostContext, services) =>
+	{
+
+	}
+
+UseWindowsService Method does several things
+
+	* Configures teh host to ue a WindowsServiceLifetime.
+	* Sets the ContentRootPath to AppContext.BaseDirectory, to start at the applicaiton directory 
+	  instead of using the default C:\Windows\System32.
+	* Enables logging to the Windows event log, using the application name as the source name.
+
+It is requied to add additional logging configuration in the appsettings.json
+
+	// appsettings.json
+
+	{
+	  "Logging": {
+		"LogLevel": {
+		  "Default": "Information",
+		  "Microsoft.Hosting.Lifetime": "Information"
+		}
+	  },
+	  "EventLog": {
+		"SourceName": "Tennis Booking Score Processor",
+		"LogName": "Application",
+ 		"LogLevel": {
+		  "Default": "Information",
+		  "Microsoft.Hosting.Lifetime": "Information"
+		}
+	  }
+
+	  ...
+
+	}
+
+The Windows service libray includes a WindowsServiceHelpers that can be used to differenciate 
+actions depending if the application is running as a Windows Service or not.
+For example
+
+        // QueueReadingService.cs
+		
+        using Microsoft.Extensions.Hosting.WindowsServices;
+
+		public class QueueReadingService : BackgroundService
+		{
+			...
+
+			public QueueReadingService(
+				ILogger<QueueReadingService> logger,
+				ISqsMessageQueue sqsMessageQueue,
+				IOptions<AwsServicesConfiguration> options,
+				ISqsMessageChannel sqsMessageChannel
+				)
+			{
+				 ...
+
+				 if (WindowsSeviceHelper.IsWindowsService())
+				 {
+					_logger.LogInformation("Running as a Windows Service!");
+				 }
+				 else
+				 {
+					 _logger.LogInformation("Not running as a Windows Service!");
+				 }
+			}
+    
+			...
+		}
+
+
+The next step is to publish the service. Using PowerShell and open the root folder for the application and using 
+the following command
+
+
+	C:\Training_NET\Exercise\apsnetcore6\TennisBookingBackend> dotnet publish ./src/TennisBookings.ScoreProcessor/TennisBookings.ScoreProcessor.csproj
+	-r win-x64 -c Release - o C:\Publish\win-service --sc -p:PublishSingleFile=True -p:PublishReadyToRun=true -p:DebugType=None
+	-p:Platform=x64
+
+	Note: The C:\Publish\win-service must be created first 
+
+
+The command will create a TennisBookings.ScoreProcessor.exe file, inside the folder C:\Publish\win-service.
+
+	C:\Publish\win-service\TennisBookings.ScoreProcessor.exe
+
+
+The next step is to register with the windows services using the following command 
+
+	C:\Training_NET\Exercise\apsnetcore6\TennisBookingBackend> sc create ScoreProcessor 
+	 binPath=C:\Publish\win-service\TennisBookings.ScoreProcessor.exe start=delayed-auto
+
+
+A final comment is about having proper configuration for credentials secured and accessible to teh service. 
+A cloud Vault is a reasonable option.
+
+
+
+* Running worker services as Linux daemons
+---------------------------------------------
+To be able to run the appplication as Linux service Daemons, it is requied to bring the
+Microsoft.Extensions.Hosting.Systemd package to the project 
+
+
+     <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="6.0.0" />    // Needed to run as Linuxs service Daemons
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="6.0.1" />    
+		<PackageReference Include="AWSSDK.S3" Version="3.7.103.20" />
+		<PackageReference Include="AWSSDK.SQS" Version="3.7.100.83" />
+		<PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="3.7.4" />
+	  </ItemGroup>
+
+
+The program.cs need to include the 'UseWindowsService'
+
+// Program.cs 
+
+var host = Host.CreateDefaultBuilder(args)
+	.UseSystemd()
+	.ConfigureServices((hostContext, services) =>
+	{
+
+	}
+
+There is not exatra configuration needed in the appsettings.json 
+
+   // appsettings.json
+
+	{
+	  "Logging": {
+		"LogLevel": {
+		  "Default": "Information",
+		  "Microsoft.Hosting.Lifetime": "Information"
+		}
+	  },
+	  
+	  ...
+
+	}
+
+The Systemd service libray includes a SystemHelpers that can be used to differenciate 
+actions depending if the application is running as a Windows Service or not.
+For example
+
+       // QueueReadingService.cs
+		
+        using Microsoft.Extensions.Hosting.Systemd;
+
+		public class QueueReadingService : BackgroundService
+		{
+			...
+
+			public QueueReadingService(
+				ILogger<QueueReadingService> logger,
+				ISqsMessageQueue sqsMessageQueue,
+				IOptions<AwsServicesConfiguration> options,
+				ISqsMessageChannel sqsMessageChannel
+				)
+			{
+				 ...
+
+				 if (SystemHelpers.IsSystemdService())
+				 {
+					_logger.LogInformation("Running as a Linux Daemone!");
+				 }
+				 else
+				 {
+					 _logger.LogInformation("Not running as a Linux Daemone!");
+				 }
+			}
+    
+			...
+		}
+
+
+The next step is to publish the service. Using PowerShell and open the root folder for the application and using 
+the following command
+
+
+	C:\Training_NET\Exercise\apsnetcore6\TennisBookingBackend> dotnet publish ./src/TennisBookings.ScoreProcessor/TennisBookings.ScoreProcessor.csproj
+	-r linux-x64 -c Release - o C:\Publish\linux-daemon --sc -p:PublishSingleFile=True -p:PublishReadyToRun=true -p:DebugType=None
+	-p:Platform=x64
+
+	Note: The C:\Publish\linux-daemon  must be created first 
+
+
+The command will create a TennisBookings.ScoreProcessor executable file, inside the folder C:\Publish\linux-daemon.
+There will be some other files created. All files are as follow
+
+	C:\Publish\linux-daemon\TennisBookings.ScoreProcessor
+	C:\Publish\linux-daemon\appsettings.json
+	C:\Publish\linux-daemon\appsettings.Development.json
+
+
+Then a unit class file need to be created in the folder that will serve for starting the service
+The file and contents is as follows
+
+   C:\Publish\linux-daemon\ScoreProcessor.service
+
+   // ScoreProcessor.service
+
+   [Unit]
+   Description=Tennis score processor
+
+   [Service]
+   Type=notify
+   workingDirectory=/usr/sbin/scoreprocessor
+   ExecStart=/usr/sbin/scoreprocessor/TennisBookings.ScoreProcessor
+   Restart=always
+   Environment="AWS_ACCESS_KEY_ID=<value-here>" 
+   Environment="AWS_SECRET_ACCESS_KEY=<value-here>"
+
+   [Install]
+   WantedBy=multi-user.target
+
+
+The next is to transfer the files into a Linux VM.
+For example, create a folder where the files will reside under teh user home directory (e.g. /home/<my-dir>/scoreprocessor)
+another option is to copy to a temporary location.
+FTP the following files into this directory
+
+	C:\Publish\linux-daemon\TennisBookings.ScoreProcessor
+	C:\Publish\linux-daemon\appsettings.json
+
+Transfer the single unit file into the home directory , for example /home/<my-dir>
+
+	C:\Publish\linux-daemon\ScoreProcessor.service
+
+With the files in a temporary location, it is necesary to copy the files into teh final folder (e.g. /usr/bin/).
+Consider that this may requier elevated access, but teh general ideas is as follows.
+
+	$ sudo cp -r /home/<my-dir>/scoreprocessor /usr/sbin
+	$ sudo chmod +x /user/bin/scoreprocessor/TennisBookings.ScoreProcessor
+	$ sudo cp /home/<my-dir>/scoreprocessor.service /etc/systemd/system
+	$ sudo systemctl daemon-reload                                          // systemctl reload command to relaoad unit clas from disk
+
+	$ sudo systemctl start scoreprocessor.service                           // start application
+
+	$ sedu journalctl -u scoreprocessor -f                                  // Look at the logs including tail for new entries as teh occur
+	
+Final comment is again to consider the proper security for teh service and the proper storage for credentials. 
+
+
+
+* Running worker services on Azure AppService
+-----------------------------------------------
+For the code preparation for deploying to Azure, it does not requies any references or usage for 
+Microsoft.Extensions.Hosting.WindowsServices or Microsoft.Extensions.Hosting.Systemd.
+It erquires not additional configuration or registration.
+
+In this example a manual publish action will occur from Visual Studio. 
+
+	 1. Select the TennisBookings.ScoreProcessor project.
+	 2. With the mouse right-button elect 'Publish'.
+	 3. In the Publish dialog-box, select 'Azure'.
+	 4. Then select 'Azure Web jobs'.
+	 5. If not available create a new 'App Service' (e.g.ScoreProcessor) or select an existing one.
+	 6. For the new App Service, selec a proper Resouce Group if available otherwise create one. 
+	 7. For the new App Service, Create a new Hosting plan. For a simple example use a 'S1 (single core') size.
+	 8. Hit 'Create' to start the initial ceating the new 'App Service'.
+	 9. Hit finsih in the publish dialgo, with the 'Azure WebJobs' selected, and teh 'ScoreProcessor' visible in 
+		the detail view.
+	10. Now edit the Publsh profile for the 'Publish' page, before taking teh final action.
+	11. In the page, select 'More actions' and then 'Edit'.
+	12. Change 'Deployment mode' to Self-contained', so teh App Service plan does not need to contain the traget framework.
+	13. For Target runtime select 'win-64'.
+	14. Set teh 'WebJobe type' to 'Continous', as the service should run continuosly.
+	15. Finally, hit 'Publish' on the upper right corner of thw page. 
+
+
+The next steps occur within teh Azure portal.
+
+	1. Select App Services and locat the ScoreProcessor and selecte it.
+	2. Inside the ScoreProcessor, select "App Service logs".
+	3. Select the 'Level' property to 'Verbose'.
+	4. Select the "Overview" section and hit the 'Restart' option on the top of the details view.
+	5. By scrolling down and selecting the 'Loag stream', teh activity will be visible in the detail view. 
+	   The application will not fully start properly as AWS kesys are not defiened yet.
+	6. Under the 'Configuration' section, create a "New application setting". Add teh tow following environment variables
+			Environment="AWS_ACCESS_KEY_ID=<value-here>" 
+            Environment="AWS_SECRET_ACCESS_KEY=<value-here>"
+	7. Check the logs again and teh service should be running now. 
+
+
+
+
+
+
+

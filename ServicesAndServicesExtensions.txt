@@ -1,0 +1,92 @@
+Services
+--------------------
+The 'Services' folder contain services that are register into memory through the Services extensions.
+Although, these can be register individually, the intention is to demostrate how can be done 
+using services extensions. 
+
+Service extensions 
+----------------------------
+
+The dependencyInjection folder implements an classes that work as an extensions for
+servicies definitions. Normally services are defined directly in the Program.cs but when 
+the number is considerable large, service extensions can help with teh code organization.
+
+For this example, the services extensions defined in the folder 'DependencyInjection' uses
+services organized undr the folder 'Services'.
+
+In general a service extension have the proper characteristics:
+
+* It can be refrences from the Program.p like any individual services. 
+  For example: 
+     
+	  builder.Services.AddBookingServices()
+
+* The main class is STATIC and can be named to what is representing.
+  For example: 
+  
+      BookingServiceCollectionExtensions
+
+* The class must have a STATIC method, which be invoked from Program.cs. This method
+  will defined an input parameter for IServiceCollection and return IServiceCollection.
+  for example: 
+
+      public static IServiceCollection AddBookingServices(this IServiceCollection services)
+
+* Indisde services can be invoked and added to the servics collection in memory.
+  For eaxmaple:
+
+    services.TryAddScoped<ICourtService, CourtService>();
+	services.TryAddScoped<ICourtBookingManager, CourtBookingManager>();
+	services.TryAddScoped<IBookingService, BookingService>();
+	services.TryAddScoped<ICourtBookingService, CourtBookingService>();
+ 
+ * The service extension can use a Service Descriptor to add services manually into the collection in memory
+   For example 
+
+        services.TryAddEnumerable(new[]
+		{
+			// User service Descriptor to add services into the session. This is an
+			// alternative to using the 'services' (e.g. services.TryAddScoped)
+			ServiceDescriptor.Scoped<IUnavailabilityProvider, ClubClosedUnavailabilityProvider>(),
+			ServiceDescriptor.Scoped<IUnavailabilityProvider, ClubClosedUnavailabilityProvider>(),
+			ServiceDescriptor.Scoped<IUnavailabilityProvider, UpcomingHoursUnavailabilityProvider>(),
+			ServiceDescriptor.Scoped<IUnavailabilityProvider, OutsideCourtUnavailabilityProvider>(),
+			ServiceDescriptor.Scoped<IUnavailabilityProvider, CourtBookingUnavailabilityProvider>()
+		}); // register multiple implementations manually
+
+ * The service extention can use 'scutor' to add programatically many services into teh colelction in memory
+   For example
+
+        // Scrutor assembly scanning for all services associated with ICourtBookingRule
+		services.Scan(scan => scan
+			.FromAssemblyOf<ICourtBookingRule>()
+				.AddClasses(classes => classes.AssignableTo<IScopedCourtBookingRule>())
+					.As<ICourtBookingRule>()
+					.WithScopedLifetime()
+				.AddClasses(classes => classes.AssignableTo<ISingletonCourtBookingRule>())
+					.As<ICourtBookingRule>()
+					.WithSingletonLifetime());
+
+
+* The service extention can use 'scutor' to define a service that implements the decorator patter.
+  This is, implements an interfaces but gets injected the same interface with teh purpose to 
+  extend teh functionality. For example adding cahching. 
+  For example, the WeatherServiceCollectionExtensions used decorator.
+
+            services.AddHttpClient<IWeatherApiClient, WeatherApiClient>();
+			services.TryAddSingleton<IWeatherForecaster, WeatherForecaster>();
+
+			// Decoreate is part of 'Scruto" NuGet, it is inteded for cases in which
+			// the decorator partern is used. The order is important and the Decorator
+			// must be defined after declaring the dependency, in this example IWeatherForecaster
+			// defined by WeatherForecaster.
+			// The CachedWeatherForecaster is implementing IWeatherForecaster but adding chaching
+			// funcitonality. Teh DI engine wil know that WeatherForecaster is required 
+			// Ref: https://andrewlock.net/adding-decorated-classes-to-the-asp.net-core-di-container-using-scrutor/
+			//      https://ardalis.com/building-a-cachedrepository-in-aspnet-core/
+			services.Decorate<IWeatherForecaster, CachedWeatherForecaster>();
+
+
+* Testing Background Services
+---------------------------------
+

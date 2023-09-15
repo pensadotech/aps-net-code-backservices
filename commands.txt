@@ -1,0 +1,35 @@
+AWS:
+----
+
+aws cloudformation --endpoint-url=http://localhost:4566 create-stack --stack-name tennis-bookings --template-body file://aws/tennis-bookings.yaml --region eu-west-2
+
+Useful additional commands:
+
+aws s3 cp ./misc/Scores.csv s3://ps-tennis-scores --endpoint-url=http://localhost:4566 --region eu-west-2
+
+aws sqs receive-message --queue-url http://localhost:4566/000000000000/ps-tennis-scores --endpoint-url=http://localhost:4566 --region eu-west-2
+
+aws --endpoint-url=http://localhost:4566 --region=eu-west-2 --no-paginate sqs list-queues
+
+
+DOCKER:
+-------
+
+docker run -it -e AWS_ACCESS_KEY_ID=TODO -e AWS_SECRET_ACCESS_KEY=TODO scoreprocessor
+
+docker ps
+
+docker stop TODO
+
+
+WINDOWS SERVICES:
+
+dotnet publish ./src/TennisBookings.ScoreProcessor/TennisBookings.ScoreProcessor.csproj -r win-x64 -c Release -o c:\Publish\win-service --sc -p:PublishSingleFile=true -p:PublishReadyToRun=true -p:DebugType=None -p:Platform=x64
+
+sc.exe create "Tennis Booking Score Processor Service" binpath="c:\Publish\TennisBookings.ScoreProcessor.exe"
+
+sc.exe delete "Tennis Booking Score Processor Service"
+
+LINUX DAEMONS
+
+dotnet publish ./src/TennisBookings.ScoreProcessor/TennisBookings.ScoreProcessor.csproj -r linux-x64 -c Release -o c:\Publish\win-service --sc -p:PublishSingleFile=true -p:PublishReadyToRun=true -p:DebugType=None -p:Platform=x64

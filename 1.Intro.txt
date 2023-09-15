@@ -1,0 +1,171 @@
+Background tasks and Worker services
+========================================
+
+	Project SDK considerations
+	------------------------------
+	This particular project have a file <root>/global.json, same folder where the 'sln' file exist)
+	At compilation, the project was giving the following error:
+
+		 NETSDK1141: Unable to resolve the .NET SDK version as specified in the global.json
+
+	The reason is that define SDK at the global.json is not matchingteh SDK installed in the computer. 
+	By opening the file, and comparing the value with the available SDKs, the user can chanage the version 
+	listed in the global.json or can simply rename the file, allowing the project to use whatever version 
+	is available.
+
+	The following commands were used to find out the available SDK versions and the file was updated.
+
+	* dotnet --list-sdks
+	* dotnet --list-runtimes
+
+	References: 
+	https://learn.microsoft.com/en-us/dotnet/core/tools/sdk-errors/netsdk1141?f1url=%3FappId%3DDev16IDEF1%26l%3DEN-US%26k%3Dk(NETSDK1141)%26rd%3Dtrue
+	https://learn.microsoft.com/en-us/dotnet/core/install/how-to-detect-installed-versions?pivots=os-windows#check-sdk-versions
+
+
+* Tennis Booking solution
+-------------------------
+This projects reviews background tasks and worker services (background services).
+
+Additioanlly, this project present the use of Services exstensions as a way to register services.
+The service extensions presents many approaches, including the use of 'scutor' to register services 
+at execution time. 
+
+The application registers, as service, a background process using IHostedService. 
+This process will execute at start and initialze the users for the in memory database. 
+
+	Note:
+	The solution has a main project named "TennisBookigs" and several API projects under the external folder.
+	In order to work, it is required to configure to start the API projects first, with no debuging, and start
+	the main project with debugging. All API project must start before the main project begins.
+
+	Select the TennisBokkings project, and using the mouse right-button, select 'Configure Startup Projects'. 
+	In here, select to use 'Multiple startup projects' and arrange and set as described. 
+
+The project uses an in-memory database using SqlLite, and through a hosted service(background service) 
+initalizes users in the database (TennisBookings.Infraestrcture.BackgroundService.InitialiseDatabaseService)
+
+	AdminEmail = "admin@example.com";
+	MemberEmail = "member@example.com";
+	both uses as password = 'password'
+
+
+* Cache concetps used with this project (Example #1)
+----------------------------------------------------------
+As part of the example code, the author has several weather forcasting classes, which calls an external WeatherService.API.
+The idea is to hold in memory a retreive value, and avoid calling the API every time. 
+The projects uses a default implementation of IDistributedCache that stores items in memory to the IServiceCollection. 
+
+The way to read and understand the code is as follows.
+
+1. The WeatherServiceCollectionExtensions registers all necesary elements to call the API and handle the cache values. 
+   It takes advantage of Scrutor 'Decorate' functionality to implement a decorator pattern.
+   The first three registered services are the ones used from the frontend. The third one can be 
+   considered an auxiliar service that updates the cache in regular bases to make the applicaiton
+   more efficient. 
+
+		// Register the API client class that will be used in teh bacground service
+		services.AddHttpClient<IWeatherApiClient, WeatherApiClient>(); // to call WeatherForcast.Api
+
+		// Apply decorator patern by using Scrutor 'Decorate'
+		// First register the regular class implementing IWeatherForecaster
+		// then register the decorator class, taht will recevie a IWeatherForecaster
+		// and will return a IWeatherForecaster, too
+		services.TryAddSingleton<IWeatherForecaster, WeatherForecaster>(); // invokes WeatherApiClient methods
+		services.Decorate<IWeatherForecaster, CachedWeatherForecaster>();  // read cache or calls API using WeatherForecaster
+
+
+		// Add an auxilar background service to collect weather and cache value
+		services.AddHostedService<WeatherCacheService>();  
+
+   It is importnat to put attention to the interfaces used, as the names are a bit confusing as they all look alike.
+   IWeatherForecaster is used for the Forecasters.
+
+
+* Creating Hosted Services concetps
+--------------------------------------
+Supports performing background task outside of the main request flow.
+Hosted services or background services are terms used interchangeably.
+
+The main class Microsoft provides is called "BackgroundService". 
+This class implement an IHostedService.
+The class need to implement one method 'ExecuteAsync' that receives a cancelation token.
+
+This method will be running in the background and when the application is coming down,
+it will automatically provide the cancelation token, to stop the process.
+Respecting this cancelation process, the applicaiton will have a clean termination.
+
+The cancelation token is also used to determine if the logic is excuted or not.
+
+For example (TennisBookings.BackgroundServices.WeatherCacheService).
+
+	public class WeatherCacheService : BackgroundService
+	{
+		protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+		{
+		   while (!stoppingToken.IsCancellationRequested)
+		   {
+		     ...
+		   }
+		}
+	}
+
+It is important that the cancelation token is passed to any method that can accept it. 
+At shutdown any async call will be cancelled.
+
+After finishing the background service, this to be registered in the Program.cs
+or a corresponding service extension. For example, at the Program.cs
+
+	builder.Services.AddHostedService<WeatherCacheService>();
+
+For example, in the WeatherServiceCollectionExtensions
+
+	services.AddHostedService<WeatherCacheService>();
+
+
+*** IMPORTANT: AddHostedService<T> is a singleton registration!
+
+
+* Hosted services
+---------------------------
+Provides a clean pattern for executing code within an ASP.Net core applicaiton,
+outside of the request pipeline. Each services is started as an asynchronous 
+background Task.
+
+Regaular usage for hosted services are
+
+	1. Polling for data from an external service.
+	2. Responding to external messages or events.
+	3. Performing data-intensive work, outside of the equest lifecycle.
+
+
+Note: Avoid using to many background service. If there is a need for a large number 
+      of then, consider braking the applications into microservices.
+
+
+The background service class abstration is as follows
+
+
+	BackgroundService.cs
+
+	public abstract class BackgroundService : IHostedService, IDisposable
+	{
+	   protected BackgroundService();
+
+	   public vrtual void Dispose();
+
+	   public virtual Task StartAsync(CancellatioToken cancellationToken);
+
+	   public virtual Task StopAsync(CancelationToken cancelationToken);
+
+	   protected abstract Task ExecuteAsync(CancellationToken stoppingToken);
+	}
+
+
+
+
+
+
+
+
+

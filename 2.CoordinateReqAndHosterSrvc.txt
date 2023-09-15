@@ -1,0 +1,292 @@
+* Coordinate between request and hosted services using System.Threading.Channels (Example #2)
+--------------------------------------------------------------------------------------------------
+
+This exercise uses a file upload mechanism to ilustrate how to coordinate the file upload
+process from the frontend to a baground service. The file upload process takes a considerable
+amount of time. The imporved process will have thw following characteristics.
+
+	1. The frontend will select teh file and this will be stores a s temporry file in the server.
+	2. Then a message will instruct thw bacgroudn service to complete the upload process.
+	3. The user will recevie an acknowledge immediatly, while the backround process is still ruinning.
+
+	URI: localhost:7273/admin/results
+
+This concepts are based on System.Threading.Channels, the characteritics are
+
+	* Thread-safe data transfer
+	* Have one or more producers, and one or more consumers.
+
+
+		 Channel<T>.Writer         Channel<t>.Reader 
+	  Producers --------------------->  Consumers
+
+
+PRODUCER
+
+In this example, the producer is the class TennisBookings.Processing.FileProcessingChannel, 
+which wraps the channel functionality, exposing what is needed. In the class, key element 
+can be highlighted. Please see final implementation for more details.
+
+
+	public class FileProcessingChannel
+	{
+		// max number of message that can exist in teh channel at one time
+		private const int MaxMessagesInChannel = 100; 
+
+		private readonly Channel<string> _channel;
+		private readonly ILogger<FileProcessingChannel> _logger;
+
+		public FileProcessingChannel(ILogger<FileProcessingChannel> logger)
+		{
+			// Create new bounded channel to hold string values
+			var options = new BoundedChannelOptions(MaxMessagesInChannel)
+			{
+				SingleWriter = false, // to support multiple producers
+				SingleReader = true   // Only one consumer
+			};
+
+			// String that will contain the temporary filename to upload.
+			_channel = Channel.CreateBounded<string>(options);
+
+			_logger = logger;
+		}
+
+		// Writes filename to a channel
+		public async Task<bool> AddFileAsync(string fileName, CancellationToken ct = default)
+		{
+		}
+
+		// Reads from a channel
+		public IAsyncEnumerable<string> ReadAllAsync(CancellationToken ct = default) =>
+		                                                   _channel.Reader.ReadAllAsync(ct);
+
+
+	}
+
+The class is register whinin the service extension class: TennisResultProcessingServiceCollectionExtensions
+as a singelton, along additional services located under the project TennisBookings.ResultsProcessing that help
+process the file. This extra services include funcitonality to handle CSV files. 
+
+	public static class TennisResultProcessingServiceCollectionExtensions
+	{
+		public static IServiceCollection AddTennisResultProcessing(this IServiceCollection services,
+			IConfiguration config)
+		{
+			services
+				.AddResultProcessing()
+				.AddTennisPlayerApiClient(options =>
+					options.BaseAddress = config.GetSection("ExternalServices:TennisPlayersApi")["Url"])
+				.AddStatisticsApiClient(options =>
+					options.BaseAddress = config.GetSection("ExternalServices:StatisticsApi")["Url"])
+				.AddSingleton<FileProcessingChannel>();  // add fille processing using chanels
+
+			return services;
+		}
+	}
+
+With the functionality in place, the FileProcessingChannel must be injected into the conroller that will handle 
+the upload operation. TennisBookings.Areas.Admin.Controllers.ResultsController contains the initial version
+and a v2 for uploading the file.
+
+	public class ResultsController : Controller
+	{
+		private readonly IResultProcessor _resultProcessor;
+		private readonly ILogger<ResultsController> _logger;
+		private readonly FileProcessingChannel _fileProcessingChannel;
+
+		public ResultsController(
+			IResultProcessor resultProcessor,
+			ILogger<ResultsController> logger,
+			FileProcessingChannel fileProcessingChannel)
+		{
+			_resultProcessor = resultProcessor;
+			_logger = logger;
+			_fileProcessingChannel = fileProcessingChannel;
+		}
+
+		[HttpPost("FileUpload")]
+		public async Task<IActionResult> FileUpload(IFormFile file, CancellationToken cancellationToken)
+		{
+		}
+
+		[HttpPost("FileUploadV2")]
+		public async Task<IActionResult> FileUploadV2(IFormFile file, CancellationToken cancellationToken)
+		{
+		}
+	}
+
+The V2 implementation is as follows. It receives teh file as parameter (IFormFile) ceate a temp file
+in where the contents is stored at the server. Then proceeds to move the file content into the channel.
+The user receives feedback after the content is uploaded in the channel. The implementation is as follows.
+
+	[HttpPost("FileUploadV2")]
+	public async Task<IActionResult> FileUploadV2(IFormFile file, CancellationToken cancellationToken)
+	{
+		var sw = Stopwatch.StartNew();
+
+		// Verify if data is available to upload in teh incoming file
+		if (file is object && file.Length > 0)
+		{
+			// Get a temporary filename
+			var fileName = Path.GetTempFileName();
+
+			// Copy file into the server using a file stream
+			using (var stream = new FileStream(fileName, FileMode.Create,
+				FileAccess.Write))
+			{
+				// Copy incoming file into the temporary location defined by the stream
+				await file.CopyToAsync(stream, cancellationToken);
+			}
+
+			// define a 3 sec wait time before acepting teh cancelation token
+			// to account for teh channel delays and capacity to accept new files
+			using var cts = CancellationTokenSource
+				.CreateLinkedTokenSource(cancellationToken);
+			cts.CancelAfter(TimeSpan.FromSeconds(3)); // wait max 3 seconds
+
+			try
+			{
+				// write the file into the channel 
+				var fileWritten = await _fileProcessingChannel
+					.AddFileAsync(fileName, cts.Token);
+
+				if (fileWritten)
+				{
+					sw.Stop();
+
+					_logger.LogInformation("Time for result upload " +
+						"was {ElapsedMilliseconds}ms.", sw.ElapsedMilliseconds);
+
+					// After uploading the file to teh channel,
+					// redirect to the screen to infromat the user
+					return RedirectToAction("UploadComplete");
+				}
+			}
+			catch (OperationCanceledException) when (cts.IsCancellationRequested)
+			{
+				// Considration to delete teh temp file in case of an error or
+				// cancelation action
+				System.IO.File.Delete(fileName); // Delete the temp file to cleanup
+			}
+		}
+
+		sw.Stop();
+
+		_logger.LogInformation("Time taken for result upload and processing " +
+			"was {ElapsedMilliseconds}ms.", sw.ElapsedMilliseconds);
+
+		return RedirectToAction("UploadFailed");
+	}
+
+
+CONSUMER
+
+The class ennisBookings.Web.BackgroundServices.FileProcessingService represents the consumer. 
+It is a background service that will read from teh channel and process the messge sent by 
+the producer.
+
+
+	public class FileProcessingService : BackgroundService  // <<<--- IHostedService
+	{
+		private readonly ILogger<FileProcessingService> _logger;
+		private readonly FileProcessingChannel _fileProcessingChannel;
+		private readonly IServiceProvider _serviceProvider;
+
+		public FileProcessingService(
+			ILogger<FileProcessingService> logger,
+			FileProcessingChannel boundedMessageChannel,   // <<--- it uses the channel wrapper
+			IServiceProvider serviceProvider)
+		{
+			_logger = logger;
+			_fileProcessingChannel = boundedMessageChannel;
+			_serviceProvider = serviceProvider;
+		}
+
+		protected override async Task ExecuteAsync(CancellationToken stoppingToken)  // <<--- Mandatory async task
+	    {
+		   ...
+		}
+
+	}
+
+The ExecuteAsync task will use the read capabilities inside the _fileProcessingChannel. This return an IEnumerable
+that can be used to obtain each file in the channel.
+
+It is important to observe is that the TennisBookings.ResultsProcessing.ResultProcessor is defined in the ServiceCollectionExtensions 
+as Scoped, because it depend on other scoped services ( services.TryAddScoped<IResultProcessor, ResultProcessor>() ).
+
+However the FileProcessingService is registerd is registered as AddHostedService<T> which implies as a Singletonregistration, 
+and thefore injecting a scoped service will create a viloation that will cuase to throw an error on execution.
+
+For this, the ResultProcessor will be registerd inside the loop to limit the Scoped service life. 
+To do this is required to inject an IServiceProvider.
+
+Normally, the use of IServiceProvider is an antipattern, but for this case, it is teh best solution to handle 
+a scoped services inside a singleton service.
+
+The final code will look as follows. 
+
+	public class FileProcessingService : BackgroundService  // <<<--- IHostedService
+	{
+		private readonly ILogger<FileProcessingService> _logger;
+		private readonly FileProcessingChannel _fileProcessingChannel; // <<--- it uses the channel wrapper
+		private readonly IServiceProvider _serviceProvider;            // <<--- Service provider 
+
+		public FileProcessingService(
+			ILogger<FileProcessingService> logger,
+			FileProcessingChannel boundedMessageChannel,
+			IServiceProvider serviceProvider)
+		{
+			_logger = logger;
+			_fileProcessingChannel = boundedMessageChannel;
+			_serviceProvider = serviceProvider;
+		}
+
+		protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+		{
+			// From file processor, read a list of files conyained in the channel
+			await foreach (var fileName in _fileProcessingChannel.ReadAllAsync()
+				.WithCancellation(stoppingToken))
+			{
+				// Create a scoped service that will live for the duroation of the loop
+				using var scope = _serviceProvider.CreateScope();         // <<-- using service provider for scoped service
+
+				// request for an instance of the IResultProcessor
+				var processor = scope.ServiceProvider.GetRequiredService<IResultProcessor>();
+
+				try
+				{
+					// Get file contents from stream
+				    await using var stream = File.OpenRead(fileName);
+
+					//Process contents
+					await processor.ProcessAsync(stream, stoppingToken);
+				}
+				finally
+				{
+					File.Delete(fileName); // Delete the temp file always
+				}
+			}
+		}
+	}
+
+The final step is to register the new background service. This defined under the TennisBookings.DependencyInjection 
+with the class TennisResultProcessingServiceCollectionExtensions.
+
+	public static class TennisResultProcessingServiceCollectionExtensions
+	{
+		public static IServiceCollection AddTennisResultProcessing(this IServiceCollection services,
+			IConfiguration config)
+		{
+			services
+				.AddResultProcessing()
+				.AddTennisPlayerApiClient(options =>
+					options.BaseAddress = config.GetSection("ExternalServices:TennisPlayersApi")["Url"])
+				.AddStatisticsApiClient(options =>
+					options.BaseAddress = config.GetSection("ExternalServices:StatisticsApi")["Url"])
+				.AddSingleton<FileProcessingChannel>()
+				.AddHostedService<FileProcessingService>();   <<-- adding new hosted service
+
+			return services;
+		}
+	}

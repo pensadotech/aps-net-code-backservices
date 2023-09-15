@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  This template deploys an S3 bucket, which sends object created event notifications to an SNS topic. 
+  A single SQS queue is subscribed to the SNS topic so that object created events can be acted upon.
+
+Parameters:
+  QueueName:
+    Description: A name for the SQS queue
+    Type: String
+    Default: ps-tennis-scores
+
+  TopicName:
+    Description: A name for the SNS topic
+    Type: String
+    Default: ps-score-doc-created
+
+  ScoresBucketName:
+    Description: A name for the S3 bucket
+    Type: String
+    Default: ps-tennis-scores
+
+Resources:
+
+  ScoresQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref QueueName
+      VisibilityTimeout: 60
+
+  ScoreDocumentTopic:
+    Type: "AWS::SNS::Topic"
+    DependsOn: 
+     - ScoresQueue
+    Properties:
+      TopicName: !Ref TopicName
+      Subscription:
+        - Endpoint: !GetAtt ScoresQueue.Arn
+          Protocol: sqs
+
+  QueueSendPolicy:
+    Type: "AWS::SQS::QueuePolicy"
+    DependsOn: 
+     - ScoresQueue
+     - ScoreDocumentTopic
+    Properties:
+      PolicyDocument:
+        Id: QueueSendPolicy
+        Statement:
+          - Sid: Allow-SendMessage-To-Queue-From-SNS-Topic
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - "sqs:SendMessage"
+            Resource: !GetAtt ScoresQueue.Arn
+            Condition:
+              ArnEquals: 
+                'aws:SourceArn': !Ref ScoreDocumentTopic
+      Queues:
+        - !Ref ScoresQueue
+
+  SNSTopicPolicy:
+    Type: 'AWS::SNS::TopicPolicy'
+    DependsOn: 
+      - ScoreDocumentTopic
+    Properties:
+      PolicyDocument:
+        Id: SNSTopicPolicy
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Statement-id
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: 'sns:Publish'
+            Resource: !Ref ScoreDocumentTopic
+            Condition:
+              ArnLike:
+                'aws:SourceArn': !Join 
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref ScoresBucketName
+      Topics:
+        - !Ref ScoreDocumentTopic
+
+  ScoresBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: 
+      - SNSTopicPolicy
+      - ScoreDocumentTopic
+    Properties:
+      BucketName: !Ref ScoresBucketName
+      NotificationConfiguration:
+        TopicConfigurations:
+          - Topic: !Ref ScoreDocumentTopic
+            Event: s3:ObjectCreated:*
+
+  TennisBookingUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: tennis-bookings
+
+  IAMPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: TennisBookingsScores
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: ['s3:GetObject','s3:PutObject']
+            Resource: !Join ['/', [!GetAtt ScoresBucket.Arn, '*']]
+          - Effect: Allow
+            Action: ['sqs:ReceiveMessage','sqs:DeleteMessage']
+            Resource: !GetAtt ScoresQueue.Arn
+      Users:
+        - !Ref TennisBookingUser
+              

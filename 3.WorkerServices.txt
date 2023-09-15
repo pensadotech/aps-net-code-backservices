@@ -1,0 +1,473 @@
+Worker Services
+==========================
+
+General concepts
+-----------------------------
+Worker services is familar with Windows Services, as there are processes working in teh background. 
+A worker services is
+
+	* A console applicaiton at its hart.
+	* Can run any background load with no user interface or user interaction.
+	* The .NET Hosting extension library supports management long-running workloads.
+	* A worker service can run forever, ntil is requested to stop.
+	* However, a worker service can use Scheduled Workloads.
+	* .NET Hosting provides common elements as 
+			- Logging, 
+			- Dependency Injecttion, and 
+			- Configuration
+	* A worker service can be build based on same fundations as any APS.NET Core aplication.
+
+Worker services can be applied as a core component to build cloud-native, microservices architectures.
+
+Common workloads can be as follows.
+
+	* Processing messages/events from a queue, service bus or event stream.
+	* Reacting to file chnages in a object/file store. 
+	* Aggregating dara from a data store. 
+	* Enriching data in data ingestion pipelines.
+	* Formatting and cleansing of AI/ML datasets. 
+
+
+* Adding a new worker service
+--------------------------------
+From the "Add a new project" selection, filetr by "Service", select the "Worker Service" template.
+
+By standing into the folder C:\Training_NET\Exercise\apsnetcore6\TennisBookingBackend\src
+execute the CLI command for creatimng a worker service: 
+
+	* dotnet new worker -n "ExampleWorkerService".
+
+The new worker project can be started by selecting the project and with the mouse right button use
+"Debug -> Start new Instance". To stop it, from teh terminal use CTRL + C.
+
+Examining the project, the Worker.cs inherits the BackgroundService class and implements the ExecuteAsync method.
+For example.
+
+
+	public class Worker : BackgroundService   // <<--- Implementatin for IHostedServices
+	{
+		private readonly ILogger<Worker> _logger;
+
+		public Worker(ILogger<Worker> logger)
+		{
+			_logger = logger;
+		}
+
+		protected override async Task ExecuteAsync(CancellationToken stoppingToken)  //<<-- mandatory method for execution
+		{
+			while (!stoppingToken.IsCancellationRequested)
+			{
+				_logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
+				await Task.Delay(1000, stoppingToken);
+			}
+		}
+	}
+
+
+The Program.cs, based on top lavel statements, has the minimu code for executing teh Worker service. 
+
+
+	using ExampleWorkerService;
+
+	IHost host = Host.CreateDefaultBuilder(args)
+		.ConfigureServices(services =>
+		{
+			services.AddHostedService<Worker>();   // <<<--- Registers the background process 
+		})
+		.Build();
+
+	await host.RunAsync();
+
+
+* Hosting in .NET
+-------------------
+
+A Host in .NET applications
+
+	* Manages application lifetime.
+	* Provides components such as dependency injection, logging and configuration.
+	* Turns a console application into a long-running service. 
+	* Starts and stop hosted services. 
+
+.NET 6 introduced the WebApplicationBuilder, which is the prefered way for WebApplicaitons. 
+In ASP.NET Core applications, the Kestrel web server is started as a hosted service. 
+
+For triggering teh shutdown for the Host the following options exist
+
+	* CTRL + C
+	* Process termination
+	* Programmatic shutdown
+
+
+* LocalStack (Amazon W3 simulated resources)
+----------------------------------------------
+
+Alternative fro Amzon cloud services and for local development the product 'LocalStack' can be used.
+Simulate the Amazon services using Docker containers.
+
+Having docker installed in the computer, and using the docker-compose.yml file in the root of the solution
+the LocalStack can be deployed with the following command
+
+	* Open a command line at the rot folder. For example folder C:\Training_NET\Exercise\apsnetcore6\TennisBookingBackend
+	* Execute the command: docker-compose up -d
+
+Use the Amazon commnad line tool to load the template for the localstack
+
+	* Command: aws cloudformation --endpoint-url=http://localhost:4566 create-stack --stack-name tennis-bookings 
+			   --template-body file://aws/tennis-bookings.yaml --region eu-west-2
+
+To testthat teh resoruces are in place, use the Amazon commnad line tool to copy teh misc file into teh local stack
+
+	* Command: aws s3 cp ./misc/Scores.csv s3://ps-tennis-scores --endpoint-url=http://localhost:4566 --region eu-west-2
+
+and then test that something has been received
+
+	* Command: aws sqs receive-message --queue-url http://localhost:4566/000000000000/ps-tennis-scores 
+	            --endpoint-url=http//localhost:4566 --region eu-west-2
+
+to clean teh message, from previous command copy teh receipt handle in order to delete it from the que.
+
+	* Command: aws sqs delete-message --receipt-handle <Recipt-number> --queue-url http://localhost:4566/000000000000/ps-tennis-scores 
+	             --endpoint-url=http://localhost:4566 --region eu-west-2
+				 
+At this point ther is a local replica of the W3 services simialr to what can be done in teh W3 cloud resources. 
+
+
+
+* Configuring the application to use W3 amazn services
+----------------------------------------------------------------
+
+The applicaiton contains several confguration settings in the appsettings.json file to control if the local W3 resoures are used or not
+
+	  "AWS": {
+		"Region": "eu-west-2",    // region tha must match the onde defind in previous section
+		"UseLocalStack": false    // <<--- TRUE imply using local resources
+	  },
+
+	  "ScoreProcessing": {
+		"S3BucketName": "ps-tennis-scores"
+	  },
+
+Inside the Program.cs there is conditions set to register teh local W3 resources
+
+
+		builder.Services.AddAWSService<IAmazonS3>();    // <<-- use amazon resources
+
+		var useLocalStack = builder.Configuration.GetValue<bool>("AWS:UseLocalStack");   // <<-- confguration switch
+
+		if (builder.Environment.IsDevelopment() && useLocalStack)    // <<-- for DEV envrionments and swtich ON, use local W3 resources
+		{
+			builder.Services.AddSingleton<IAmazonS3>(sp =>
+			{
+				var s3Client = new AmazonS3Client(new AmazonS3Config
+				{
+					ServiceURL = "http://localhost:4566",
+					ForcePathStyle = true,
+					AuthenticationRegion = builder.Configuration.GetValue<string>("AWS:Region") ?? "eu-west-2"
+				});
+
+				return s3Client;
+			});
+		}
+
+
+* Configuring Amazon resources
+------------------------------
+
+For the purpose of this training, the TennisBookings.ScoreProcessor was added and this include the NuGet packages
+required to handle Amazon services. 
+
+    Microsoft.Extensions.Hosting
+    AWSSDK.S3
+    AWSSDK.SQS
+    AWSSDK.Extensions.NETCore.Setup
+
+It also include a refernce to the TennisBookings.ResultsProcessing
+
+  <ProjectReference Include="..\TennisBookings.ResultsProcessing\TennisBookings.ResultsProcessing.csproj" />
+
+The appsettings.json configuration contains the definitions forusing local resources.
+For remotre resoruces, the ScoresQueueUrl most be provided from teh Amazon cloud panel. 
+
+	"AWS": {
+		"Region": "eu-west-2",
+		"ScoresQueueUrl": "TODO",
+		"LocalstackScoresQueueUrl": "http://localhost:4576/000000000000/ps-tennis-scores",
+		"ScoresBucketName": "ps-tennis-scores",
+		"UseLocalStack": true
+	  }
+
+The Program.cs registers all reosurces needed to access Amazon W3 services, remote or local. 
+
+
+
+* Reading messages from an W3 SQS queue (TennisBookings.ScoreProcessor microservice)
+-------------------------------------------------------------------------------------
+
+The general idea for the sample code that follows is that on backgroudn service will collect
+messages from the Queu and publish thr message through a channel, form ther a second background service
+will read the message from the channel and will process the data contained in the message.
+
+	QueueReadingService <--- Qeue
+	QueueReadingService --> Channel 
+
+	ScoreProcessingService <-- channel
+	ScoreProcessingService --> Process data
+
+The channel is abstarcted through the SqsMessageChannel class. The projects implement one producer to one consumer.
+
+PRODUCER
+
+The QueueReadingService will become the background services to read from the SQS que and publish the message into teh channel. 
+This implements the BackgroundService and needs some injected services.
+
+		public class QueueReadingService : BackgroundService
+		{
+			private readonly ILogger<QueueReadingService> _logger;
+			private readonly ISqsMessageQueue _sqsMessageQueue;
+			private readonly ISqsMessageChannel _sqsMessageChannel;
+			private readonly string _queueUrl;
+
+			public long ReceivesAttempted { get; private set; }
+			public long MessagesReceived { get; private set; }
+
+			public QueueReadingService(
+				ILogger<QueueReadingService> logger,
+				ISqsMessageQueue sqsMessageQueue,
+				IOptions<AwsServicesConfiguration> options,
+				ISqsMessageChannel sqsMessageChannel)
+			{
+				_logger = logger;
+				_sqsMessageQueue = sqsMessageQueue;
+				_sqsMessageChannel = sqsMessageChannel;
+
+				if (options.Value.UseLocalStack)
+				{
+					_queueUrl = options.Value.LocalstackScoresQueueUrl;
+				}
+				else
+				{
+					_queueUrl = options.Value.ScoresQueueUrl;
+				}
+
+				_logger.LogInformation("Reading from {QueueUrl}", _queueUrl);
+			}
+
+			protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+			{
+			   ...
+			}
+		}
+
+
+The implementation for the ExecuteAsync method is as follows
+
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+	{
+		_logger.LogInformation("Started queue reading service.");
+
+		// instance of a received message request, this is to connect to the queue
+		// and retrive oustanding messages
+		var receiveMessageRequest = new ReceiveMessageRequest
+		{
+			QueueUrl = _queueUrl,         // Queue URL
+			MaxNumberOfMessages = 10,     // How many message will be requested from the que
+			WaitTimeSeconds = 5           // wait time when messages are not yet available on the que
+		};
+
+		while (!stoppingToken.IsCancellationRequested)
+		{
+			ReceivesAttempted++;
+
+			// Sends the message request to the que asking to send any outstanding messages
+			// Teh reuqest message is essentially to contact teh SQS que and asking for messages
+			var receiveMessageResponse =
+				await _sqsMessageQueue.ReceiveMessageAsync(receiveMessageRequest, stoppingToken);
+
+
+			if (receiveMessageResponse.HttpStatusCode == HttpStatusCode.OK &&
+				receiveMessageResponse.Messages.Any())
+			{
+				// If ok and messages were recevied, execute this actions.
+
+				// Increment messages recevied counter
+				MessagesReceived += receiveMessageResponse.Messages.Count;
+
+				_logger.LogInformation("Received {MessageCount} messages from the queue.",
+					receiveMessageResponse.Messages.Count);
+
+				// Process message: Pubhlishes the message through the channel (Producer)
+				await _sqsMessageChannel.WriteMessagesAsync(receiveMessageResponse.Messages, stoppingToken);
+			}
+			else if (receiveMessageResponse.HttpStatusCode == HttpStatusCode.OK)
+			{
+				// If Ok, but no messages received, take this actions
+
+				_logger.LogInformation("No messages received. Attempting receive again in 10 seconds.",
+					receiveMessageResponse.Messages.Count);
+
+				// Stop for 10 seconds before trying tp recevie more messages
+				await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+			}
+			else if (receiveMessageResponse.HttpStatusCode != HttpStatusCode.OK)
+			{
+				_logger.LogError("Unsuccessful response from AWS SQS.");
+			}
+		}
+
+		// signal the channel that the process is completed
+		_sqsMessageChannel.TryCompleteWriter();
+	}
+
+
+For this to execute, it is required to register the backround services in the Program.cs
+
+		// register background service
+		services.AddHostedService<QueueReadingService>();
+
+
+CONSUMER
+
+The ScoreProcessingService is a background service responsible for reading available message from a Channel and process the message data.
+IN a simialr way that the producer, it requires injected services. The logic is much simpler.
+
+	internal class ScoreProcessingService : BackgroundService
+	{
+		private readonly ILogger<ScoreProcessingService> _logger;
+		private readonly ISqsMessageChannel _sqsMessageChannel;
+		private readonly IServiceProvider _serviceProvider;
+
+		public ScoreProcessingService(
+			ILogger<ScoreProcessingService> logger,
+			ISqsMessageChannel sqsMessageChannel,
+			IServiceProvider serviceProvider
+		   )
+		{
+			_logger = logger;
+			_sqsMessageChannel = sqsMessageChannel;
+			_serviceProvider = serviceProvider;
+		}
+
+		protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+		{
+			await foreach (var message in _sqsMessageChannel.Reader.ReadAllAsync()  // <<-- Get messages from channel
+				.WithCancellation(stoppingToken))
+			{
+				_logger.LogInformation("Read message {Id} to process from channel.", message.MessageId);
+
+				using var scope = _serviceProvider.CreateScope();  // <<-- The processor needs special handling as it need to be scoped
+
+				var scoreProcessor = scope.ServiceProvider.GetRequiredService<IScoreProcessor>(); // <<-- Get the processor
+
+				await scoreProcessor.ProcessScoresFromMessageAsync(message, stoppingToken);  // <<--- process data
+
+				_logger.LogInformation("Finished processing message {Id} from channel.", message.MessageId);
+			}
+
+			_logger.LogInformation("Finished processing all available messages from channel.");
+		}
+	}
+
+The final registration in the Program.cs is depcited below, adding both backgrond services and
+other services in whch the have dependencies.
+
+
+		// additional services requied for ScoreProcessingService
+		services.AddTransient<IScoreProcessor, AwsScoreProcessor>();
+		services.AddSingleton<IS3EventNotificationMessageParser, S3EventNotificationMessageParser>();
+		services.AddSingleton<IS3DataProvider, S3DataProvider>();
+		services.AddTennisPlayerApiClient(options =>
+			options.BaseAddress = hostContext.Configuration
+				.GetSection("ExternalServices:TennisPlayersApi")["Url"]);
+		services.AddStatisticsApiClient(options =>
+		options.BaseAddress = hostContext.Configuration
+				.GetSection("ExternalServices:StatisticsApi")["Url"]);
+		services.AddResultProcessing();
+
+		// Services to handle W3 SQS messages
+		services.AddSingleton<ISqsMessageChannel, SqsMessageChannel>();  // <<-- wraps the Chanel implementation
+		services.AddSingleton<ISqsMessageDeleter, SqsMessageDeleter>();
+		services.AddSingleton<ISqsMessageQueue, SqsMessageQueue>();
+
+		// register background service (This ae singleton registrations)
+		services.AddHostedService<QueueReadingService>();
+		services.AddHostedService<ScoreProcessingService>();
+
+
+Refactoring the application to use Amazon W3 services
+-------------------------------------------------------
+
+The new functionality will be used to upload a CSV file with the results using the Amazon We cloud services. 
+Once loaded into S3, teh background processes in the microservices will read teh que and process the file.
+
+Under the TennisBookings.Areas.Admin.Controllers, the ResultsController will implment a V3 for uploading the file. 
+It will requires some extra dependencies
+
+		public class ResultsController : Controller
+		{
+			private readonly IResultProcessor _resultProcessor;
+			private readonly ILogger<ResultsController> _logger;
+			private readonly FileProcessingChannel _fileProcessingChannel;
+			private readonly IAmazonS3 _amazonS3;
+			private readonly string _s3BucketName;
+
+			public ResultsController(
+				IResultProcessor resultProcessor,
+				ILogger<ResultsController> logger,
+				FileProcessingChannel fileProcessingChannel,
+				IAmazonS3 amazonS3,                             // <<-- From teh Amazon SDK
+				IOptions<ScoreProcesingConfiguration> options)  // <<-- to get the name of the S3 bucket
+			{
+				_resultProcessor = resultProcessor;
+				_logger = logger;
+				_fileProcessingChannel = fileProcessingChannel;
+				_amazonS3 = amazonS3;
+				_s3BucketName = options.Value.S3BucketName;
+			}
+
+			...
+		}
+
+The POST V3 operation will look as follows
+
+	public async Task<IActionResult> FileUploadV3(IFormFile file, CancellationToken cancellationToken)
+	{
+		var sw = Stopwatch.StartNew();
+
+		if (file is object && file.Length > 0)
+		{
+			// instead of saving the file locally, it will be stored through S3
+
+			// Generate a unique key for teh object to upload
+			// S3 identify files within the bucket using the key 
+			var objectKey = $"{Guid.NewGuid()}.csv";
+
+			try
+			{
+				// Upload file to S3. From here the background services created
+				// will process the file by reading it out of the S3 queue
+				using var fileTransferUtility = new TransferUtility(_amazonS3);
+
+				await using var uploadedFileStream = file.OpenReadStream();
+
+				await fileTransferUtility
+					.UploadAsync(uploadedFileStream, _s3BucketName,
+						objectKey, cancellationToken);
+			}
+			catch (Exception)
+			{
+				return RedirectToAction("UploadFailed");
+			}
+		}
+
+		sw.Stop();
+
+		_logger.LogInformation("Time taken for result upload and processing " +
+			"was {ElapsedMilliseconds}ms.", sw.ElapsedMilliseconds);
+
+		return RedirectToAction("UploadComplete");
+	}
+
+
+

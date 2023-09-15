@@ -1,0 +1,587 @@
+Advance topics 
+=====================================
+
+* Source code for background services
+--------------------------------------
+
+Microsoft stores the Background services code in GitHub under dotnet/runtme (https://github.com/dotnet/runtime)
+he reader can et familiar with the BackgroundService and Host iimplementation at the following locations.
+
+https://github.com/dotnet/runtime/blob/main/src/libraries/Microsoft.Extensions.Hosting.Abstractions/src/BackgroundService.cs
+
+https://github.com/dotnet/runtime/blob/main/src/libraries/Microsoft.Extensions.Hosting/src/Internal/Host.cs
+
+
+* Exception handling
+---------------------------------
+
+Since .NET 6, by default, unhandled exceptions cause the application to shutdown (microservice). 
+In prior .NET versions, the application would continue to run, but the worker services will not perform any work.
+
+Unhandled exceptions represents a failure that cannot be automatically recovered.
+Exceptions should be logged before shutdown. 
+Unhandled exceptions should not be ignored. 
+If required, under .NET 6, the behavior for prior versions can be configured.
+
+To chnage the default behavior, this is, to shutdown the application when an exception occurs, 
+The following lines need to be included in the Program.cs for the microservice
+		
+		Program.cs
+
+		// This is to modify the behavior to shutdown the application
+		// in case of an exception in teh background service
+		services.Configure<HostOptions>(hostOptions =>
+		{
+			hostOptions.BackgroundServiceExceptionBehavior =   // <<- Override behavior, do nto stop upon an error. 
+				BackgroundServiceExceptionBehavior.Ignore;
+		});
+
+With the initial configuration in place, the way to control the error in the background service is 
+inside the ExecuteAsynction to wrap the WHILE loop for the ExecuteAsync in a Try-Catch clause. 
+For example
+
+		QueueReadingService.cs
+
+		protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+		{
+			...
+
+			// wrap the main WHILE loop in a TRY-CATCH statement to handle exceptions
+			try    
+				{
+					while (!stoppingToken.IsCancellationRequested)
+					{
+						ReceivesAttempted++;
+
+						var receiveMessageResponse =
+							await _sqsMessageQueue.ReceiveMessageAsync(receiveMessageRequest, stoppingToken);
+
+						if (receiveMessageResponse.HttpStatusCode == HttpStatusCode.OK &&
+							receiveMessageResponse.Messages.Any())
+						{
+							MessagesReceived += receiveMessageResponse.Messages.Count;
+
+							_logger.LogInformation("Received {MessageCount} messages from the queue.",
+								receiveMessageResponse.Messages.Count);
+                    
+							// PRODUCER: Producer for messages into teh bounded channel
+							await _sqsMessageChannel.WriteMessagesAsync(receiveMessageResponse.Messages, stoppingToken);
+						}
+						else if (receiveMessageResponse.HttpStatusCode == HttpStatusCode.OK)
+						{
+							_logger.LogInformation("No messages received. Attempting receive again in 10 seconds.",
+								receiveMessageResponse.Messages.Count);
+
+							await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+						}
+						else if (receiveMessageResponse.HttpStatusCode != HttpStatusCode.OK)
+						{
+							_logger.LogError("Unsuccessful response from AWS SQS.");
+						}
+					}
+				}
+				catch (OperationCanceledException)   // <<------ exception handling 
+				{
+					_logger.OperationCancelledExceptionOccurred();
+				}    
+				catch (Exception ex)               // <<------ exception handling 
+				{
+					_logger.LogCritical(ex, "A critical exception was thrown.");
+				}
+				finally
+				{
+					_sqsMessageChannel.TryCompleteWriter();
+
+					// Stop is not included with producer, to allow the client service to flush out any messages
+			        // in the Bounded channel
+				}
+		}
+
+
+
+* Life time management and shutdown process
+--------------------------------------------
+
+IHostApplicationLifetime.cs
+
+This interface exposes three cancelation tokens and one method
+
+	public interface IHostApplicationLifetime
+	{
+
+	   CancellationToken ApplicationStarted  { get; }  // Triggered when application is fully started
+	   CancellationToken ApplicationStopping { get; }  // upon a graceful shutdown is begenning
+	   CancellationToken ApplicationStopped  { get; }  // when a graceful shutdown is completed
+
+	   void StopApplication();   // can be used to begin application shutdown
+
+	}
+
+The program ScoreProcessingService provide and exmaple for using the IHostApplicationLifetime.
+IN this case, is to implement the StopApplication, to halt all background services.
+
+Note: It is safe to call the StopApplication method multiple times, 
+      the first one will take effect and others ignored. 
+
+To use the IHostApplicationLifetime, it is requied to injected through the constructor. 
+
+    ScoreProcessingService.cs
+
+	public class ScoreProcessingService : BackgroundService
+	{
+		private readonly ILogger<ScoreProcessingService> _logger;
+		private readonly ISqsMessageChannel _sqsMessageChannel;
+		private readonly IServiceProvider _serviceProvider;
+		private readonly IHostApplicationLifetime _hostApplicationLifetime;
+
+		public ScoreProcessingService(
+			ILogger<ScoreProcessingService> logger,
+			ISqsMessageChannel sqsMessageChannel,
+			IServiceProvider serviceProvider,
+			IHostApplicationLifetime hostApplicationLifetime  // <<--- IHostApplicationLifetime
+		   )
+		{
+			_logger = logger;
+			_sqsMessageChannel = sqsMessageChannel;
+			_serviceProvider = serviceProvider;
+			_hostApplicationLifetime = hostApplicationLifetime;
+		}
+
+		...
+
+	}
+
+Inside the ExecuteAsync, using the TRY-CATCH block, the finally clause call the 
+IHostApplicationLifetime StopApplication.
+    
+	ScoreProcessingService.cs
+
+	try 
+	{
+	   await foreach (var message in _sqsMessageChannel.Reader.ReadAllAsync()
+			.WithCancellation(stoppingToken))
+		{
+		   ....
+		}
+
+	}
+	catch() 
+	{
+	   ...
+	}
+	finally
+	{
+	   // Only in the client
+	   // send stop signal to other background services 
+	   // avoiding filling up the BoundedChannel with unatended messages
+	   _hostApplicationLifetime.StopApplication();
+	}
+
+An important ideas is to monitor shutdown in production, to adress abnormal shutdowns.
+This can be done using logs, recording metrics. The following exmaple depicts the idea
+
+	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+	{
+		 _logger.LogInformation("Started queue reading service.");
+    
+		// Register in logs that application is shuting down.
+		// for production this can include metrics or advance info
+		// Or fire an external event
+		stoppingToken.Register(() =>
+		{
+			_logger.LogInformation("Ending queue reading service due to host shutdown");
+		});
+
+		try 
+		{
+		   while (!stoppingToken.IsCancellationRequested)
+		   {
+			...
+		   }
+		}
+		catch()
+		{
+		   ...
+		}
+		finally
+		{
+		   ...
+		}
+	}
+
+Considering that the QueueReadingService is the producer that sends mesasge into the bonded channel 
+and ScoreProcessingService is the client. The stop signal is included in the client, and not the producer.
+This allows for the client to flush out and process any message in transit. 
+
+Invoking StopApplication at teh producer will lead for messages in the que to get stuck and unprocessed.
+
+* Cancelation task and tokens
+---------------------------
+Upon a gracful shutdown, the cancellation token is passed to async calls to stop activities. 
+However, teh developer may forgot to pass teh cancelation token, or not pass it intentionaly.
+For example, the ResultProcessor does not pass the cancelation token.
+
+	public class ResultProcessor : IResultProcessor
+	{   
+		public ResultProcessor(
+			ICsvResultParser csvParser,
+			ITennisPlayerApiClient tennisPlayerApiClient,
+			IStatisticsApiClient statisticsApiClient,
+			ILogger<ResultProcessor> logger)
+		{
+			...
+		}
+
+		public async Task ProcessAsync(Stream stream, CancellationToken cancellationToken = default)
+		{
+			   ...
+
+		    // Last chance to cancel. After this point, we allow all results to be calculated and posted, 
+			// even if cancellation is signaled.
+			// We don't want to send results for half of a file.
+			cancellationToken.ThrowIfCancellationRequested();
+
+			foreach (var result in results)
+			{
+				// Cancelation token could be passed, but it is  not passed to 
+				// avoid partially processing teh file
+				var playerOneTask = _tennisPlayerApiClient.GetPlayerAsync(result.PlayerOneId);
+				var playerTwoTask = _tennisPlayerApiClient.GetPlayerAsync(result.PlayerTwoId);
+
+				...
+			}
+
+			...
+		}
+	}
+
+What happen with the application shutdown whne the code chooses not to cancel propely 
+and therfore continue executing?
+
+Looking at the Background service class in GitHub,the StopAsync method waits for eaither 
+of two tasks, the completion of the task or the cancelletion token passed into the method.
+
+			finally
+            {
+                // Wait until the task completes or the stop token triggers
+                var tcs = new TaskCompletionSource<object>();
+                using CancellationTokenRegistration registration = 
+				          cancellationToken.Register(s => ((TaskCompletionSource<object>)s!).SetCanceled(), tcs);
+                // Do not await the _executeTask because cancelling it will throw an 
+				// OperationCanceledException which we are explicitly ignoring
+                await Task.WhenAny(_executeTask, tcs.Task).ConfigureAwait(false);
+            }
+
+The cancelation task will take effect after a configurable time of 30 seconds (Default). 
+if a diffent timw is requied for the cancelation task wait time, in the Program.cs, a new setting
+can be defined, overriding teh default behavior. 
+For example
+
+		Program.cs
+
+		services.Configure<HostOptions>(hostOptions =>
+		{
+			hostOptions.BackgroundServiceExceptionBehavior =
+				BackgroundServiceExceptionBehavior.Ignore;
+			hostOptions.ShutdownTimeout = TimeSpan.FromSeconds(60); // <<-- override cancalation taks wait time
+		});
+
+
+* Background Services registration order
+----------------------------------------
+The order in which teh Background Services were registered matters. 
+The Start action will cause the Background Services to start in the order in which they were registered.
+The Stop action will cause the background Services to stop in reverse order in which these were registered. 
+
+The flow is sequential and a service will not start until the previous one is started and 
+for stopping, a service will not stop until the previous is not stopped. 
+This can be depicted as follows
+
+     StartAsync() --> 1.ServiceA.StartAsync() -> 2.ServiceB.StartAsync() -> 3.ServiceB.StartAsync()
+	 StopAsync()  --> 3.ServiceB.StopAsync()  -> 2.ServiceB.StopAsync()  -> 1.ServiceA.StopAsync()
+
+Understandin the Start and Stop sequence, at the Program.cs, the section that register the Backgrond Service, 
+some issue can be identified with the order in which these where registed
+	 
+		// register background service (This ae singleton registrations)
+		services.AddHostedService<QueueReadingService>();    
+		services.AddHostedService<ScoreProcessingService>();
+
+Current effect: 
+
+	Start
+	1. Start reading from the que and write into Channel (QueueReadingService)       <-- start sending file to channel
+	2. Start processing itemsfrom the channel from the que (ScoreProcessingService). <-- Start processing files
+
+	Stop (in reverse order)
+	2. Stop processing itemsfrom the channel from the que (ScoreProcessingService).  <-- Stop processing files
+	1. Stop reading from the que and write into Channel (QueueReadingService)        <-- Start processing files
+	
+However, the implictions are as follows. Consider that on a Shutdown there are 60 seconds to 
+complete teh processing of any inflight messages from the que.
+
+Because ScoreProcessingService was registered last, it will be the first one to shutdown.
+There is an edge case in which is possible that ScoreProcessingService will not finish within 60 
+processing in transit messages. Could be because the file is big or where external services are 
+not available. 
+
+This means that the shutdown for ScoreProcessingService can take some time. 
+Meanwhile, QueueReadingService cannot be shutdown and this could continue reading files 
+from the que and seding them in to teh channel, giving more work to the ScoreProcessingService.
+This situation can leave many files stuck in the Channel unprocessed. 
+
+By swpaing the registration orderm this situaton can be adverted 
+
+		Progra.cs
+
+		services.AddHostedService<ScoreProcessingService>();
+		services.AddHostedService<QueueReadingService>();
+
+New effect
+
+		Start
+       	1. Start processing itemsfrom the channel from the que (ScoreProcessingService). <-- Start processing files ( channel is empty, but it is ok)
+		2. Start reading from the que and write into Channel (QueueReadingService)       <-- start sending file to channel
+	    
+		Stop (in reverse order)
+		2. Start reading from the que and write into Channel (QueueReadingService)       <- Stop sending elements to Channel
+		1. Start processing itemsfrom the channel from the que (ScoreProcessingService). <-- Stop processing files (order gives more time 
+		                                                                                     to flush out channel)
+
+
+
+
+* Configuring the Host 
+------------------------
+The host builder is created using the Host.CreateDefaultBuilder(), normally found at teh Program.cs.
+
+	var host = Host.CreateDefaultBuilder(args)
+	.ConfigureServices((hostContext, services) =>
+	{
+	   
+	}
+
+This will set some common defaults
+
+HostBuilder Defautls
+
+	Load Appplication configuration           Adds logging provider         
+	------------------------------------      ----------------------------------
+	appsettings.json                          Console
+	appsettings.{environmnet}.json            Debug
+	Secret Manager (when app runs             EventSource
+	  in the dev environments)                EventLog(Windows only)
+	Environment variables
+	Command-line arguments
+
+
+Note: All configuration for APS.NET Core application applies to workser services (microservices)
+
+Addition methods in teh hots builder
+
+	Program.cs
+
+ 	IHost host = Host.CreateDefaultBuilder()
+	     .ConfigureServices(services =>
+	     {
+	         services.AddSingleton<ISomething, Something>();  // <-- traditional way to ergister services
+	     })
+	    .ConfigureAppConfiguration(config =>                  // Add other sources for configuration
+	     {
+	        config.AddInMemoryCollection(new[]                // <--for example, adds variables in memory
+	        {
+	           new KeyValuePair<string, string>("Key", "Value")
+	        });
+	     })
+	    .ConfigureLogging(logging =>                          // <-- control where logs are written and what data they contain
+	    {
+	      logging.AddSimpleConsole(opt => opt.IncludeScopes = true);
+	    })
+	   .Build();
+
+Note: For more configuration options, read the notes for the Configuration project (Asp-Net-core-conf)
+
+
+* Override StartAsync and StopAsync
+----------------------------------------------
+
+StartAsync and StopAsync can be override to provide additional functionality for the process. 
+In this example, functionality was added to the StopAsync to record how long is taking 
+to shut down the ScoreProcessingService.
+For example, the code below uses async to wait for the stop operation to finish before
+it sends the elapse time into the logs
+
+		public class ScoreProcessingService : BackgroundService
+		{
+		    ...
+
+		    public override async Task StopAsync(CancellationToken cancellationToken)
+			{
+				var sw = Stopwatch.StartNew();
+
+				await base.StopAsync(cancellationToken);
+
+				_logger.LogInformation("Completed shutdown in {Ms}ms", sw.ElapsedMilliseconds);
+			}
+		}
+
+
+* Testing Background services
+------------------------------------------
+For testing, it is recomended to use some NuGet packages.
+The example project uses the following ones.
+
+    Moq
+    FluentAssertions
+    Microsoft.NET.Test.Sdk
+    xunit
+    xunit.runner.visualstudio
+	coverlet.collector
+
+For examples of Unit testing, the reader should refer to the classes indicated below. 
+Thes offer key points for testing a workser service. 
+
+	* QueueReadingServiceTests
+	* ScoreProcessingServiceTests
+
+Extract most functionality into targeted and more easily testable calsses with
+a single responsibility.
+
+
+* Avoid Blocking Code in StartAsync (long-running work on startup)
+-----------------------------------------------------------------------
+Understading that the hosted service is started sequentially by awaiting its StartAsync method, and  
+it can occur that an StartAsync can block the the application startup.
+
+If we have two background services registerd, the second will not start until teh first one is completed. 
+It is expected that each StartAsync completes quickly. Thefore, long-runnning work in StartAsycn is
+not recomended.
+
+It is important to mention that ExecuteAsync also blocks startup.  
+Until the first await returns a task, it will execute  synchronously.
+Any code before the first 'awiat' should be considered blocking to teh overall startup sequence. 
+
+An unusual edge case due how the parallel library works.
+if the Awaiting task completes immediatly, it is in effect 'synchronous'. 
+
+To simulate the situation, it will be enough to add a deal in teh first registered background service.
+For example, teh registration is as follows
+
+	// Program.cs
+	services.AddHostedService<ScoreProcessingService>();
+	services.AddHostedService<QueueReadingService>();
+
+a delay can be added to the first background service 
+
+	// ScoreProcessingService
+	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+	{
+	    Thread.Sleep(5000); // simulate long-running synchronous work
+
+		try
+		{
+		   ....
+		}
+	}
+
+Using debug points in both background services ExecuteAsync, it can be obvserved that 
+there is a dealay before the second one starts. Confirming that the second services will 
+not start until the first one start is completed. This is, there are running synchronously. 
+
+A way to resolve this, when there are long-runing processes, is to force the ExecuteAsync
+to become async right away using teh following technique for async tasks , 
+
+
+    // ScoreProcessingService
+	protected override async Task ExecuteAsync(CancellationToken stoppingToken)  // <<- async task
+	{
+	    await Task.Yield();   // <<-- To force it to become async from the beginning
+
+	    Thread.Sleep(5000);   // <<-- simulate long-running synchronous work
+
+		try
+		{
+		   ....
+		}
+	}
+
+Using debug points, not it is observed that the after the Task.Yield, the second background sevrvice
+is executed immediatly. After 5 second passed,teh execution completes for the first background service. 
+
+This technique is normaly not needed as long as the bakground services starts quckly and ExecuteAsync
+does not have long-running logic before the first 'await' taks is executed.
+For eaxmple 
+
+
+    // ScoreProcessingService
+	protected override async Task ExecuteAsync(CancellationToken stoppingToken)  // <<- async task
+	{   
+	    // no mayor delays here
+
+		try
+		{
+		   await foreach (var message in _sqsMessageChannel.Reader.ReadAllAsync()
+			.WithCancellation(stoppingToken))
+			{
+			  ....
+			}
+		}
+	}
+
+However, for cases in which there are long-runing logic, the 'await Task.Yield()' prodides a solution 
+and can have a minimal perfomance trade off because it may force the creation of one additional 
+async state machine for teh service.
+
+The use of 'await Task.Yield()' has a side effect in testing. If teh user run exiting tests
+it will fail. The solution is to add to the test for the background service 
+
+	public class ScoreProcessingServiceTests
+	{
+		[Fact]
+		public async Task ShouldStopApplication_WhenExceptionThrown_BecauseServiceProviderDoesNotContainRequiredService()
+		{
+			// Test atht if a dependency is missing, the application shold stop
+
+			var sp = new ServiceCollection().BuildServiceProvider();
+
+			var hostApplicationLifetime = new Mock<IHostApplicationLifetime>();
+
+			var sqsChannel = new SqsMessageChannel(NullLogger<SqsMessageChannel>.Instance);
+
+			var messages = new Message[]
+			{
+				new() { MessageId = Guid.NewGuid().ToString() }
+			};
+
+			await sqsChannel.WriteMessagesAsync(messages);
+
+			var sut = new ScoreProcessingService(
+				NullLogger<ScoreProcessingService>.Instance,
+				sqsChannel,
+				sp,
+				hostApplicationLifetime.Object);
+
+			await sut.StartAsync(default);
+			await sut.ExecuteTask;          // <<-- add to make sure that Verify is after the start is completed
+
+			hostApplicationLifetime.Verify(x => x.StopApplication(), Times.Once);
+		}
+
+		...
+	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
