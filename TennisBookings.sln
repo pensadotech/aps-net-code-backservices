@@ -33,20 +33,13 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Readme", "Readme", "{A8593C41-524D-489F-94FA-AE720D964C0A}"
 	ProjectSection(SolutionItems) = preProject
-		1.Intro.txt = 1.Intro.txt
 		ReadMe\1.Intro.txt = ReadMe\1.Intro.txt
-		2.CoordinateReqAndHosterSrvc.txt = 2.CoordinateReqAndHosterSrvc.txt
 		ReadMe\2.CoordinateReqAndHosterSrvc.txt = ReadMe\2.CoordinateReqAndHosterSrvc.txt
-		3.WorkerServices.txt = 3.WorkerServices.txt
 		ReadMe\3.WorkerServices.txt = ReadMe\3.WorkerServices.txt
-		4.AdvanceTopics1.txt = 4.AdvanceTopics1.txt
 		ReadMe\4.AdvanceTopics1.txt = ReadMe\4.AdvanceTopics1.txt
-		5.RunningInProduction.txt = 5.RunningInProduction.txt
 		ReadMe\5.RunningInProduction.txt = ReadMe\5.RunningInProduction.txt
 		ReadMe\5.Testing.txt = ReadMe\5.Testing.txt
-		ServicesAndServicesExtensions.txt = ServicesAndServicesExtensions.txt
 		ReadMe\ServicesAndServicesExtensions.txt = ReadMe\ServicesAndServicesExtensions.txt
-		TennisBooking_ER.png = TennisBooking_ER.png
 		ReadMe\TennisBooking_ER.png = ReadMe\TennisBooking_ER.png
 	EndProjectSection
 EndProject
