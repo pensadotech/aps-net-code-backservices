@@ -1,0 +1,93 @@
+
+Services Life time
+========================================
+
+The below three methods define the lifetime of the services.
+
+1. AddTransient
+Transient lifetime services are created each time they are requested. This lifetime works best for lightweight, stateless services.
+
+2. AddScoped
+Scoped lifetime services are created once per request.
+
+3. AddSingleton
+Singleton lifetime services are created the first time they are requested (or when ConfigureServices is run if you specify an instance there) and then every subsequent request will use the same instance.
+
+
+Ref: <https://www.c-sharpcorner.com/article/understanding-addtransient-vs-addscoped-vs-addsingleton-in-asp-net-core/> 
+
+
+Satrtup Files
+=======================================
+By default an application has a startup.cs file. However, it is possible to have more than one by using the following attribute:
+
+	[assembly: HostingStartup(typeof(<MyProgram))]
+
+For example
+
+		assembly: HostingStartup(typeof(CommentService.API.CommentServiceStartup))]
+		namespace HostingStartupLibrary
+		{
+			public class CommentServiceStartup : IHostingStartup
+			{
+				public void Configure(IWebHostBuilder builder)
+				{
+					  builder.ConfigureServices(services => 
+					  {
+						 // configure services here, example
+			   
+						 // example retrieving an existing service
+						 using var serviceProvider = services.BuildServiceProvider();
+						 var configuration = serviceProvider.GetService<Iconfiguration>();
+				
+						// defining a service 
+						services.AddSingleton(<myservice);
+						services.AddTrnasient<Imyinterfaces,MyClass>();
+				
+						// define servce for a background process
+						service.AddTransient<ImessagingProvider,MessageProvider>();
+				
+			  
+					  });
+            
+				}
+			}
+		}
+
+
+
+Ref: https://learn.microsoft.com/en-us/aspnet/core/fundamentals/host/platform-specific-configuration?view=aspnetcore-7.0
+
+
+
+Service Providers
+=======================================
+
+`BuildServiceProvider` is a method in the `Microsoft.Extensions.DependencyInjection` namespace 
+that creates a service container⁴. It is used to create a service provider, which is responsible 
+for creating instances of dependencies and disposing of them when they are no longer needed². 
+
+In ASP.NET Core, the `BuildServiceProvider` method is typically called after all services have 
+been added to the `IServiceCollection`². It creates a service container that can be used to resolve 
+dependencies throughout the application². 
+
+However, it's important to note that calling `BuildServiceProvider` manually from application code 
+can result in issues such as creating torn singletons and causing references to object graphs across 
+multiple containers³. In most cases, ASP.NET Core will automatically build the `ServiceProvider` at 
+runtime, so there is usually no need to call `BuildServiceProvider` manually³.
+
+
+			public void Configure(IWebHostBuilder builder)
+			{
+					builder.ConfigureServices(services => 
+					{
+						// configure services here, example
+			   
+						// example retrieving an existing service using the BuildService provider
+						using var serviceProvider = services.BuildServiceProvider();
+						var configuration = serviceProvider.GetService<Iconfiguration>();
+                       
+					    ...
+					});
+    		}
+

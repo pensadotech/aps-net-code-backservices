@@ -37,10 +37,11 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Readme", "Readme", "{A8593C
 		ReadMe\2.CoordinateReqAndHosterSrvc.txt = ReadMe\2.CoordinateReqAndHosterSrvc.txt
 		ReadMe\3.WorkerServices.txt = ReadMe\3.WorkerServices.txt
 		ReadMe\4.AdvanceTopics1.txt = ReadMe\4.AdvanceTopics1.txt
-		ReadMe\5.RunningInProduction.txt = ReadMe\5.RunningInProduction.txt
 		ReadMe\5.Testing.txt = ReadMe\5.Testing.txt
 		ReadMe\ServicesAndServicesExtensions.txt = ReadMe\ServicesAndServicesExtensions.txt
+		ReadMe\6.RunningInProduction.txt = ReadMe\6.RunningInProduction.txt
 		ReadMe\TennisBooking_ER.png = ReadMe\TennisBooking_ER.png
+		ServicesTopics.txt = ServicesTopics.txt
 	EndProjectSection
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ExampleWorkerService", "src\ExampleWorkerService\ExampleWorkerService.csproj", "{526E34E1-6A5D-4A3F-9219-8689B50E561B}"

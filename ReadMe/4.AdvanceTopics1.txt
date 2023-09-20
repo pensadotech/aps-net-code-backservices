@@ -530,9 +530,9 @@ For eaxmple
 
 However, for cases in which there are long-runing logic, the 'await Task.Yield()' prodides a solution 
 and can have a minimal perfomance trade off because it may force the creation of one additional 
-async state machine for teh service.
+async state machine for the service.
 
-The use of 'await Task.Yield()' has a side effect in testing. If teh user run exiting tests
+The use of 'await Task.Yield()' has a side effect in testing. If the user run existing tests
 it will fail. The solution is to add to the test for the background service 
 
 	public class ScoreProcessingServiceTests
@@ -540,7 +540,7 @@ it will fail. The solution is to add to the test for the background service
 		[Fact]
 		public async Task ShouldStopApplication_WhenExceptionThrown_BecauseServiceProviderDoesNotContainRequiredService()
 		{
-			// Test atht if a dependency is missing, the application shold stop
+			// Test as if a dependency is missing, the application shold stop
 
 			var sp = new ServiceCollection().BuildServiceProvider();
 
