@@ -3,10 +3,10 @@
 
 This exercise uses a file upload mechanism to ilustrate how to coordinate the file upload
 process from the frontend to a baground service. The file upload process takes a considerable
-amount of time. The imporved process will have thw following characteristics.
+amount of time. The imporved process will have the following characteristics.
 
-	1. The frontend will select teh file and this will be stores a s temporry file in the server.
-	2. Then a message will instruct thw bacgroudn service to complete the upload process.
+	1. The frontend will select the file and this will be stores as temporary file in the server.
+	2. Then a message will instruct the bacgroudn service to complete the upload process.
 	3. The user will recevie an acknowledge immediatly, while the backround process is still ruinning.
 
 	URI: localhost:7273/admin/results
@@ -115,7 +115,7 @@ and a v2 for uploading the file.
 		}
 	}
 
-The V2 implementation is as follows. It receives teh file as parameter (IFormFile) ceate a temp file
+The V2 implementation is as follows. It receives the file as parameter (IFormFile) ceate a temp file
 in where the contents is stored at the server. Then proceeds to move the file content into the channel.
 The user receives feedback after the content is uploaded in the channel. The implementation is as follows.
 
@@ -181,8 +181,8 @@ The user receives feedback after the content is uploaded in the channel. The imp
 
 CONSUMER
 
-The class ennisBookings.Web.BackgroundServices.FileProcessingService represents the consumer. 
-It is a background service that will read from teh channel and process the messge sent by 
+The class TennisBookings.Web.BackgroundServices.FileProcessingService represents the consumer. 
+It is a background service that will read from the channel and process the messge sent by 
 the producer.
 
 
@@ -215,13 +215,13 @@ that can be used to obtain each file in the channel.
 It is important to observe is that the TennisBookings.ResultsProcessing.ResultProcessor is defined in the ServiceCollectionExtensions 
 as Scoped, because it depend on other scoped services ( services.TryAddScoped<IResultProcessor, ResultProcessor>() ).
 
-However the FileProcessingService is registerd is registered as AddHostedService<T> which implies as a Singletonregistration, 
-and thefore injecting a scoped service will create a viloation that will cuase to throw an error on execution.
+However the FileProcessingService is registered as AddHostedService<T> which implies as a Singletonregistration, 
+and thefore injecting a scoped service will create a viloation that will cause to throw an error on execution.
 
 For this, the ResultProcessor will be registerd inside the loop to limit the Scoped service life. 
 To do this is required to inject an IServiceProvider.
 
-Normally, the use of IServiceProvider is an antipattern, but for this case, it is teh best solution to handle 
+Normally, the use of IServiceProvider is an antipattern, but for this case, it is the best solution to handle 
 a scoped services inside a singleton service.
 
 The final code will look as follows. 
@@ -248,7 +248,7 @@ The final code will look as follows.
 			await foreach (var fileName in _fileProcessingChannel.ReadAllAsync()
 				.WithCancellation(stoppingToken))
 			{
-				// Create a scoped service that will live for the duroation of the loop
+				// Create a scoped service that will live for the duration of the loop
 				using var scope = _serviceProvider.CreateScope();         // <<-- using service provider for scoped service
 
 				// request for an instance of the IResultProcessor

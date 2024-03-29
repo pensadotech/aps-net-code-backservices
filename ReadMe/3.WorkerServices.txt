@@ -3,13 +3,13 @@ Worker Services
 
 General concepts
 -----------------------------
-Worker services is familar with Windows Services, as there are processes working in teh background. 
+Worker services is familar with Windows Services, as there are processes working in the background. 
 A worker services is
 
 	* A console applicaiton at its hart.
 	* Can run any background load with no user interface or user interaction.
 	* The .NET Hosting extension library supports management long-running workloads.
-	* A worker service can run forever, ntil is requested to stop.
+	* A worker service can run forever, until is requested to stop.
 	* However, a worker service can use Scheduled Workloads.
 	* .NET Hosting provides common elements as 
 			- Logging, 
@@ -30,15 +30,15 @@ Common workloads can be as follows.
 
 * Adding a new worker service
 --------------------------------
-From the "Add a new project" selection, filetr by "Service", select the "Worker Service" template.
+From the "Add a new project" selection, filtrr by "Service", select the "Worker Service" template.
 
-By standing into the folder C:\Training_NET\Exercise\apsnetcore6\TennisBookingBackend\src
+Alternativeley, by standing into the folder C:\Training_NET\Exercise\apsnetcore6\TennisBookingBackend\src
 execute the CLI command for creatimng a worker service: 
 
 	* dotnet new worker -n "ExampleWorkerService".
 
 The new worker project can be started by selecting the project and with the mouse right button use
-"Debug -> Start new Instance". To stop it, from teh terminal use CTRL + C.
+"Debug -> Start new Instance". To stop it, from the terminal use CTRL + C.
 
 Examining the project, the Worker.cs inherits the BackgroundService class and implements the ExecuteAsync method.
 For example.
@@ -64,7 +64,7 @@ For example.
 	}
 
 
-The Program.cs, based on top lavel statements, has the minimu code for executing teh Worker service. 
+The Program.cs, based on top level statements, it has the minimu code for executing the Worker service. 
 
 
 	using ExampleWorkerService;
@@ -92,7 +92,7 @@ A Host in .NET applications
 .NET 6 introduced the WebApplicationBuilder, which is the prefered way for WebApplicaitons. 
 In ASP.NET Core applications, the Kestrel web server is started as a hosted service. 
 
-For triggering teh shutdown for the Host the following options exist
+For triggering the shutdown for the Host the following options exist
 
 	* CTRL + C
 	* Process termination
@@ -102,7 +102,7 @@ For triggering teh shutdown for the Host the following options exist
 * LocalStack (Amazon W3 simulated resources)
 ----------------------------------------------
 
-Alternative fro Amzon cloud services and for local development the product 'LocalStack' can be used.
+Alternative fro Amazon cloud services and for local development the product 'LocalStack' can be used.
 Simulate the Amazon services using Docker containers.
 
 Having docker installed in the computer, and using the docker-compose.yml file in the root of the solution
@@ -148,7 +148,7 @@ The applicaiton contains several confguration settings in the appsettings.json f
 		"S3BucketName": "ps-tennis-scores"
 	  },
 
-Inside the Program.cs there is conditions set to register teh local W3 resources
+Inside the Program.cs there is conditions set to register the local W3 resources
 
 
 		builder.Services.AddAWSService<IAmazonS3>();    // <<-- use amazon resources

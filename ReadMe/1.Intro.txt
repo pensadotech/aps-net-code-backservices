@@ -9,7 +9,7 @@ Background tasks and Worker services
 		 NETSDK1141: Unable to resolve the .NET SDK version as specified in the global.json
 
 	The reason is that define SDK at the global.json is not matchingteh SDK installed in the computer. 
-	By opening the file, and comparing the value with the available SDKs, the user can chanage the version 
+	By opening the file, and comparing the value with the available SDKs, the user can change the version 
 	listed in the global.json or can simply rename the file, allowing the project to use whatever version 
 	is available.
 
@@ -64,7 +64,7 @@ The way to read and understand the code is as follows.
    considered an auxiliar service that updates the cache in regular bases to make the applicaiton
    more efficient. 
 
-		// Register the API client class that will be used in teh bacground service
+		// Register the API client class that will be used in the bacground service
 		services.AddHttpClient<IWeatherApiClient, WeatherApiClient>(); // to call WeatherForcast.Api
 
 		// Apply decorator patern by using Scrutor 'Decorate'
@@ -78,7 +78,7 @@ The way to read and understand the code is as follows.
 		// Add an auxilar background service to collect weather and cache value
 		services.AddHostedService<WeatherCacheService>();  
 
-   It is importnat to put attention to the interfaces used, as the names are a bit confusing as they all look alike.
+   It is important to put attention to the interfaces used, as the names are a bit confusing as they all look alike.
    IWeatherForecaster is used for the Forecasters.
 
 
@@ -128,11 +128,11 @@ For example, in the WeatherServiceCollectionExtensions
 
 * Hosted services
 ---------------------------
-Provides a clean pattern for executing code within an ASP.Net core applicaiton,
+Provides a clean pattern for executing code within an ASP.Net core application,
 outside of the request pipeline. Each services is started as an asynchronous 
 background Task.
 
-Regaular usage for hosted services are
+Regular usage for hosted services are
 
 	1. Polling for data from an external service.
 	2. Responding to external messages or events.
@@ -140,10 +140,10 @@ Regaular usage for hosted services are
 
 
 Note: Avoid using to many background service. If there is a need for a large number 
-      of then, consider braking the applications into microservices.
+      of then, consider breaking the applications into microservices.
 
 
-The background service class abstration is as follows
+The background service class abstraction is as follows
 
 
 	BackgroundService.cs
